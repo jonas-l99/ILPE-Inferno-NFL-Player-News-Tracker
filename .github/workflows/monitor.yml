@@ -2,42 +2,51 @@ name: Instagram NFL Monitor
 
 on:
   schedule:
-    # Alle 5 Minuten ausf ühren (Minimum bei GitHub Actions)
-    # Cron-Syntax: Minute Stunde Tag Monat Wochentag
-    - cron: '*/5 * * * *'  # Alle 5 Minuten
-  workflow_dispatch:  # Manuelles Ausl ösen ermöglichen (zum Testen)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      reset_seen_posts:
+        description: 'Nur für Test: seen_posts.txt vorher leeren?'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      
+
       - name: Python setup
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install feedparser requests
-      
+          pip install feedparser requests beautifulsoup4
+
+      - name: Optional reset of seen posts for test
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_seen_posts }}
+        run: rm -f seen_posts.txt
+
       - name: Run Instagram Monitor
         env:
           RSS_FEED_URL: ${{ secrets.RSS_FEED_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python instagram_monitor.py
-      
-      - name: Commit and push seen_posts.txt
+
+      - name: Commit and push seen posts
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add seen_posts.txt
-          git diff --cached --quiet || git commit -m "Update seen_posts.txt"
+          git diff --cached --quiet || git commit -m "Update seen posts"
           git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
