@@ -43,14 +43,12 @@ def load_players():
             position = (row.get("position") or "").strip().upper()
             team = (row.get("team") or "").strip().upper()
             if name and position:
-                players.append(
-                    {
-                        "name": name,
-                        "position": position,
-                        "team": team,
-                        "normalized": normalize_name(name),
-                    }
-                )
+                players.append({
+                    "name": name,
+                    "position": position,
+                    "team": team,
+                    "normalized": normalize_name(name),
+                })
     return players
 
 
@@ -79,22 +77,17 @@ def find_matching_players(caption, players):
     matched_names = set()
 
     for player in players:
-        found = False
         for alias in player_aliases(player):
             normalized_alias = normalize_name(alias)
             if len(normalized_alias) >= 6 and normalized_alias in caption_normalized:
-                found = True
+                if player["name"] not in matched_names:
+                    matches.append(player)
+                    matched_names.add(player["name"])
                 break
-
-        if found and player["name"] not in matched_names:
-            matches.append(player)
-            matched_names.add(player["name"])
 
     if matches:
         return matches
 
-    # Vorsichtiger Fallback für kleine Schreibabweichungen: nur Namen, die als
-    # Zwei- bis Vier-Wort-Folge in der Caption erscheinen, werden verglichen.
     words = re.findall(r"[A-Za-zÀ-ÿ]+(?:['.-][A-Za-zÀ-ÿ]+)*", caption)
     candidates = []
     for size in (2, 3, 4):
@@ -102,10 +95,10 @@ def find_matching_players(caption, players):
             candidates.append(" ".join(words[index:index + size]))
 
     normalized_candidates = {normalize_name(candidate): candidate for candidate in candidates}
-    all_normalized_names = [player["normalized"] for player in players]
-
     for player in players:
-        close = difflib.get_close_matches(player["normalized"], normalized_candidates.keys(), n=1, cutoff=FUZZY_CUTOFF)
+        close = difflib.get_close_matches(
+            player["normalized"], normalized_candidates.keys(), n=1, cutoff=FUZZY_CUTOFF
+        )
         if close and player["name"] not in matched_names:
             matches.append(player)
             matched_names.add(player["name"])
@@ -116,35 +109,29 @@ def find_matching_players(caption, players):
 def first_complete_sentences(text, max_length=900):
     if len(text) <= max_length:
         return text
-
     shortened = text[:max_length]
-    sentence_endings = [shortened.rfind("."), shortened.rfind("!"), shortened.rfind("?")]
-    ending = max(sentence_endings)
-    if ending > max_length * 0.45:
-        return shortened[:ending + 1]
-    return shortened.rstrip() + "…"
+    ending = max(shortened.rfind("."), shortened.rfind("!"), shortened.rfind("?"))
+    return shortened[:ending + 1] if ending > max_length * 0.45 else shortened.rstrip() + "…"
 
 
-def escape_markdown(value):
-    return re.sub(r"([_\[\]()~`>#+\-=|{}.!])", r"\\\1", value)
+def escape_html(value):
+    return html.escape(str(value), quote=False)
 
 
 def format_message(player, news, post_link):
     lines = [
-        "🏈 *NFL Update*",
+        "🏈 <b>NFL Update</b>",
         "",
-        f"- *Spieler:* {escape_markdown(player['name'])}",
-        f"- *Position:* {escape_markdown(player['position'])}",
+        f"- <b>Spieler:</b> {escape_html(player['name'])}",
+        f"- <b>Position:</b> {escape_html(player['position'])}",
     ]
     if player["team"]:
-        lines.append(f"- *Team:* {escape_markdown(player['team'])}")
-    lines.extend(
-        [
-            f"- *News:* {escape_markdown(news)}",
-            "",
-            f"🔗 [Quelle]({post_link})",
-        ]
-    )
+        lines.append(f"- <b>Team:</b> {escape_html(player['team'])}")
+    lines.extend([
+        f"- <b>News:</b> {escape_html(news)}",
+        "",
+        f'🔗 <a href="{escape_html(post_link)}">Quelle</a>',
+    ])
     return "\n".join(lines)
 
 
@@ -155,11 +142,13 @@ def send_telegram_message(message):
         json={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
-            "parse_mode": "MarkdownV2",
+            "parse_mode": "HTML",
             "disable_web_page_preview": True,
         },
         timeout=20,
     )
+    if not response.ok:
+        print(f"Telegram API-Antwort: {response.text}")
     response.raise_for_status()
 
 
