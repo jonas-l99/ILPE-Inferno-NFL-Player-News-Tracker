@@ -17,6 +17,70 @@ PLAYERS_FILE = "players.csv"
 SEEN_POSTS_FILE = "seen_posts.txt"
 FUZZY_CUTOFF = 0.90
 
+# Ein Post wird nur gesendet, wenn die Positionsbezeichnung aus der CSV im
+# Beitrag vorkommt UND mindestens ein Fantasy-relevanter Auslöser vorkommt.
+ALERT_KEYWORDS = [
+    r"\bbreaking\b",
+    r"\bbreaking news\b",
+    r"\binjur(?:y|ies|ed)\b",
+    r"\bhurt\b",
+    r"\bsuffered\b",
+    r"\bdiagnosed\b",
+    r"\bmedical\b",
+    r"\bconcussion\b",
+    r"\bacl\b",
+    r"\bmcl\b",
+    r"\bachilles\b",
+    r"\bhamstring\b",
+    r"\bgroin\b",
+    r"\bankle\b",
+    r"\bknee\b",
+    r"\bshoulder\b",
+    r"\bwrist\b",
+    r"\bfoot\b",
+    r"\bback\b",
+    r"\bneck\b",
+    r"\brib(?:s)?\b",
+    r"\bfracture(?:d)?\b",
+    r"\btorn\b",
+    r"\bsprain(?:ed)?\b",
+    r"\bstrain(?:ed)?\b",
+    r"\bout\b",
+    r"\bquestionable\b",
+    r"\bdoubtful\b",
+    r"\bactive\b",
+    r"\binactive\b",
+    r"\bwill not play\b",
+    r"\bwon'?t play\b",
+    r"\bsidelined\b",
+    r"\bmiss(?:es|ed|ing)?\b",
+    r"\breturn(?:s|ed|ing)?\b",
+    r"\bplaced on (?:the )?(?:injured reserve|ir)\b",
+    r"\bdesignated to return\b",
+    r"\binjured reserve\b",
+    r"\b\bir\b",
+    r"\bpup\b",
+    r"\bnfi\b",
+    r"\bsuspend(?:ed|sion)?\b",
+    r"\bsigned\b",
+    r"\bsigning\b",
+    r"\bagreed(?: to)?\b",
+    r"\bcontract\b",
+    r"\bextension\b",
+    r"\btrade(?:d)?\b",
+    r"\btraded\b",
+    r"\bacquired\b",
+    r"\bsent to\b",
+    r"\breleased\b",
+    r"\bwaived\b",
+    r"\bcut\b",
+    r"\bwaiver(?:s)?\b",
+    r"\bactivated\b",
+    r"\belevated\b",
+    r"\bpromoted\b",
+]
+ALERT_PATTERN = re.compile("|".join(ALERT_KEYWORDS), re.IGNORECASE)
+
 
 def clean_text(value):
     if not value:
@@ -71,12 +135,20 @@ def player_aliases(player):
     return {alias for alias in aliases if alias}
 
 
+def caption_has_position(caption, position):
+    # Q kann in Football-Captions auch als Teil anderer Wörter auftauchen;
+    # daher ausschließlich als einzelne Abkürzung akzeptieren.
+    return bool(re.search(rf"(?<![A-Za-z]){re.escape(position)}(?![A-Za-z])", caption, re.IGNORECASE))
+
+
 def find_matching_players(caption, players):
     caption_normalized = normalize_name(caption)
     matches = []
     matched_names = set()
 
     for player in players:
+        if not caption_has_position(caption, player["position"]):
+            continue
         for alias in player_aliases(player):
             normalized_alias = normalize_name(alias)
             if len(normalized_alias) >= 6 and normalized_alias in caption_normalized:
@@ -96,6 +168,8 @@ def find_matching_players(caption, players):
 
     normalized_candidates = {normalize_name(candidate): candidate for candidate in candidates}
     for player in players:
+        if not caption_has_position(caption, player["position"]):
+            continue
         close = difflib.get_close_matches(
             player["normalized"], normalized_candidates.keys(), n=1, cutoff=FUZZY_CUTOFF
         )
@@ -104,6 +178,10 @@ def find_matching_players(caption, players):
             matched_names.add(player["name"])
 
     return matches
+
+
+def is_fantasy_relevant(caption):
+    return bool(ALERT_PATTERN.search(caption))
 
 
 def first_complete_sentences(text, max_length=900):
@@ -186,8 +264,15 @@ def main():
         raw_caption = entry.get("description") or entry.get("summary") or entry.get("title") or ""
         caption = clean_text(raw_caption)
         post_link = entry.get("link", "")
-        matches = find_matching_players(caption, players)
 
+        # Jeder Beitrag wird gespeichert, auch wenn er keine Meldung auslöst.
+        # So wird derselbe allgemeine Post nie erneut geprüft.
+        if not is_fantasy_relevant(caption):
+            print(f"Nicht fantasy-relevant: {post_link}")
+            seen_posts.add(post_id)
+            continue
+
+        matches = find_matching_players(caption, players)
         if matches:
             news = first_complete_sentences(caption)
             for player in matches:
@@ -196,7 +281,7 @@ def main():
                 notifications += 1
                 print(f"Telegram gesendet: {player['name']} ({player['position']}, {player['team'] or 'ohne Team'})")
         else:
-            print(f"Kein CSV-Spieler-Match: {post_link}")
+            print(f"Kein passender Spieler mit Positionskürzel: {post_link}")
 
         seen_posts.add(post_id)
 
